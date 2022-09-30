@@ -11,12 +11,29 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 public class Main {
-    private static String serviceUrl = "pulsar+ssl://test-kj-49e27491-4df5-49ea-a239-f16b1ec6ba7b.gcp-shared-gcp-usce1-eagle.streamnative.g.sn3.dev:6651";
-    private static String oauthAudience = "urn:sn:pulsar:test-kay-johansen:test-kj";
+//    private static String pulsarCluster = "test-2-9";
+//    private static String pulsarClusterNamespace = "cv-pulsar";
+//    private static String pulsarUrl = "test-2-9.cv-pulsar.sn3.dev";
+//    private static String credsFileName = "sa-continuous-verification-staging.json";
+
+    private static String pulsarCluster = "test-2-8";
+    private static String pulsarClusterNamespace = "cv-pulsar";
+    private static String pulsarUrl = "test-2-8.cv-pulsar.sn3.dev";
+    private static String credsFileName = "sa-continuous-verification-staging.json";
+
+//    private static String pulsarCluster = "test-kj";
+//    private static String pulsarClusterNamespace = "test-kay-johansen";
+//    private static String pulsarUrl = "test-kj-49e27491-4df5-49ea-a239-f16b1ec6ba7b.gcp-shared-gcp-usce1-eagle.streamnative.g.sn3.dev";
+//    private static String credsFileName = "test-kj-bot.json";
+
+    private static String serviceUrl = String.format("pulsar+ssl://%s:6651", pulsarUrl);
+    private static String oauthAudience = String.format("urn:sn:pulsar:%s:%s", pulsarClusterNamespace, pulsarCluster);
     private static String oauthIssuerUrl = "https://auth.sncloud-stg.dev/";
-    private static String credentialsUrl = "file:///Users/kayjohansen/service-account/test-kj-bot.json";
+    private static String credentialsUrl = String.format("file:///Users/kayjohansen/service-account/%s", credsFileName);
+
     private static String topic = "test-transactions";
     private static String producerName = "kj-producer-1";
+    private static boolean enableTransaction = true;
 
     public static void main(String[] args) throws MalformedURLException, PulsarClientException, ExecutionException, InterruptedException {
         new Main().run();
@@ -27,6 +44,7 @@ public class Main {
         PulsarClient client = null;
         Producer<String> producer = null;
         try {
+            System.out.println("Transactions enabled: " + enableTransaction);
             System.out.println("Creating Pulsar client");
             client = getClient();
             System.out.println("Successfully created pulsar client");
@@ -46,11 +64,17 @@ public class Main {
     }
 
     private void produceOneMessage(PulsarClient client, Producer<String> producer, String msg) throws PulsarClientException, ExecutionException, InterruptedException {
-        Transaction transaction = client.newTransaction().withTransactionTimeout(5, TimeUnit.MINUTES).build().get();
         String key = UUID.randomUUID().toString();
-        TypedMessageBuilder<String> mb = producer.newMessage(transaction).key(key);
-        MessageId id = mb.value(msg).send();
-        transaction.commit().get();
+        Transaction transaction = null;
+        if (enableTransaction) {
+            transaction = client.newTransaction().withTransactionTimeout(5, TimeUnit.MINUTES).build().get();
+            TypedMessageBuilder<String> mb = producer.newMessage(transaction).key(key);
+            MessageId id = mb.value(msg).send();
+            transaction.commit().get();
+        } else {
+            TypedMessageBuilder<String> mb = producer.newMessage().key(key);
+            MessageId id = mb.value(msg).send();
+        }
     }
 
     private Producer<String> createProducer(PulsarClient client, String producerName, String topic) throws PulsarClientException {
@@ -58,6 +82,7 @@ public class Main {
                 .newProducer(Schema.STRING)
                 .topic(topic)
                 .producerName(producerName)
+                .sendTimeout(0, TimeUnit.SECONDS)
                 .create();
         return producer;
     }
@@ -65,7 +90,7 @@ public class Main {
     private PulsarClient getClient() throws MalformedURLException, PulsarClientException {
         ClientBuilder pulsarClientBuilder = PulsarClient.builder()
                 .serviceUrl(serviceUrl)
-                .enableTransaction(true);
+                .enableTransaction(enableTransaction);
 
         final Authentication credentials = getOauthCredentials();
         if (credentials != null) {
